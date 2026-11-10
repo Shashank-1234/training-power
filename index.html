@@ -88,6 +88,7 @@ td:first-child { color: var(--ink2); white-space: nowrap; }
         <button type="button" id="vGlow" aria-pressed="true">Power mode</button>
         <button type="button" id="vGrain" aria-pressed="false">Energy mode</button>
       </span>
+      <label class="chk" for="cover"><input type="checkbox" id="cover"> Show the meters</label>
     </div>
     <p class="cap" id="cap1">Power mode: each part glows brighter the more power it draws right now, on one scale for every part.</p>
     <div class="stage"><canvas id="cvD" width="3040" height="960" aria-label="Diagram of the two servers: each part glows with its power or fills with its energy, each GPU's outline shows its state, and dots show data moving"></canvas></div>
@@ -102,6 +103,13 @@ td:first-child { color: var(--ink2); white-space: nowrap; }
     <div class="legend">
       <span><i class="sw" style="background:var(--data)"></i>data inside a server</span>
       <span><i class="sw" style="background:var(--net)"></i>data to the other server</span>
+    </div>
+    <div class="legend" id="meterkey" hidden>
+      <span>Who measures what:</span>
+      <span><i class="sw" style="background:var(--gpu-m)"></i>GPU driver, every 20 ms</span>
+      <span><i class="sw" style="background:var(--cpu-m)"></i>CPU’s own counters, every second</span>
+      <span><i class="sw" style="background:var(--wall-m)"></i>server’s management chip (IPMI), every second</span>
+      <span><i class="sw" style="background:repeating-linear-gradient(45deg,var(--ink2) 0 2px,transparent 2px 5px)"></i>no meter</span>
     </div>
   </section>
 
@@ -326,14 +334,18 @@ function drawBox(s, b) {
   else if (b.w > 120) text(b.label, cx, b.y + b.h / 2, { size: 10, color: COL.ink2 });
   else { const w = b.label.split(' '); const mid = Math.ceil(w.length / 2); text(w.slice(0, mid).join(' '), cx, b.y + b.h / 2 - 7, { size: 9.5, color: COL.ink2 }); text(w.slice(mid).join(' '), cx, b.y + b.h / 2 + 7, { size: 9.5, color: COL.ink2 }); }
 }
-function drawCover(s) {
+function drawCover(s) {      // the three ways a reading reaches us: GPU driver, CPU counters, the BMC over IPMI
   const { ctx, text } = D, X = x => s.x0 + x, Y = y => TOP + y;
-  const outline = (x, y, w, h, color, label, ly) => { ctx.setLineDash([]); ctx.strokeStyle = color; ctx.lineWidth = 2 * S; D.rr(x, y, w, h, 7); ctx.stroke(); if (label) text(label, x + 6, ly ?? y - 7, { size: 10, color, align: 'left', weight: 600 }); };
-  outline(X(-12), Y(-14), 704, 418, COL.wallM, 'wall-plug meter: the whole server, once a second', Y(404) + 11);
-  [['s0'], ['s1']].forEach(([id]) => { const b = s.boxes.find(x => x.id === id); outline(b.x - 3, b.y - 3, b.w + 6, b.h + 6, COL.cpuM, id === 's0' ? 'CPU counters: socket 0 · 1 s' : 'socket 1 · 1 s', b.y + b.h + 12); });
-  s.gpus.forEach(b => outline(b.x - 2, b.y - 2, b.w + 4, b.h + 4, COL.gpuM));
-  text('GPU meters: one per GPU · 20 ms', X(436), Y(262), { size: 10, color: COL.gpuM, align: 'left', weight: 600 });
-  if (s.lossW) outline(s.psu.x - 3, s.psu.y - 3, s.psu.w + 6, s.psu.h + 6, COL.psuM);
+  const outline = (x, y, w, h, color) => { ctx.setLineDash([]); ctx.strokeStyle = color; ctx.lineWidth = 2 * S; D.rr(x, y, w, h, 7); ctx.stroke(); };
+  const label = (str, x, y, color) => text(str, x, y, { size: 10, color, align: 'left', weight: 600 });
+  outline(X(-12), Y(-14), 704, 418, COL.wallM);
+  [s.wall, s.psu].forEach(b => outline(b.x - 3, b.y - 3, b.w + 6, b.h + 6, COL.wallM));
+  label("server's management chip, over IPMI: whole server and power supplies", X(-6), Y(404) + 11, COL.wallM);
+  ['s0', 's1'].forEach(id => { const b = s.boxes.find(x => x.id === id); outline(b.x - 3, b.y - 3, b.w + 6, b.h + 6, COL.cpuM); });
+  label("CPU's own counters: CPU and memory", X(132), Y(140), COL.cpuM);
+  const g = s.gpus, gx0 = Math.min(...g.map(b => b.x)) - 5, gx1 = Math.max(...g.map(b => b.x + b.w)) + 5;
+  outline(gx0, g[0].y - 5, gx1 - gx0, g[0].h + 10, COL.gpuM);
+  label('GPU driver: each GPU', X(436), Y(262), COL.gpuM);
   // hatch the unmetered parts
   s.boxes.filter(b => b.kind === 'none' || b.kind === 'unm').forEach(b => { ctx.save(); D.rr(b.x, b.y, b.w, b.h, 5); ctx.clip(); ctx.strokeStyle = 'rgba(154,164,177,0.35)'; ctx.lineWidth = S;
     for (let k = -b.h; k < b.w; k += 7) { ctx.beginPath(); ctx.moveTo((b.x + k) * S, (b.y + b.h) * S); ctx.lineTo((b.x + k + b.h) * S, b.y * S); ctx.stroke(); } ctx.restore(); });
@@ -473,6 +485,7 @@ $('speed').onchange = e => speed = +e.target.value;
 $('t').oninput = e => resetTo(+e.target.value);
 $('vGlow').onclick = () => { view = 'glow'; press($('vGlow'), $('vGrain')); $('cap1').textContent = 'Power mode: each part glows brighter the more power it draws right now, on one scale for every part.'; };
 $('vGrain').onclick = () => { view = 'grain'; press($('vGrain'), $('vGlow')); $('cap1').textContent = 'Energy mode: each grain is 25 joules that part has used. Grains pile up where the energy is used; the faster they pile up, the higher the power.'; };
+$('cover').onchange = e => { cover = e.target.checked; $('meterkey').hidden = !cover; };
 $('s7').onclick = () => { stripHost = 'ml7'; press($('s7'), $('s1')); };
 $('s1').onclick = () => { stripHost = 'ml1'; press($('s1'), $('s7')); };
 document.fonts.ready.then(() => { resetTo(0); requestAnimationFrame(frame); });
